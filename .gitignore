@@ -1,0 +1,5 @@
+*.so
+*.cpp
+*.swp
+build
+venv
