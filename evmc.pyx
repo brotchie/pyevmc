@@ -6,6 +6,7 @@ include 'evmc.pxi'
 from cpython.bytes cimport PyBytes_FromStringAndSize
 from libc.stdlib cimport malloc, free
 from libc.string cimport memcpy
+from libcpp cimport bool
 
 cdef size_t ADDRESS_SIZE = 20
 cdef size_t BYTES32_SIZE = 32
@@ -36,7 +37,7 @@ class HostInterface:
     def copy_code(self, address: bytes, code_offset: int) -> bytes:
         raise NotImplementedError()
 
-    def selfdestruct(self, address: bytes, beneficiary: bytes) -> None:
+    def selfdestruct(self, address: bytes, beneficiary: bytes) -> bool:
         raise NotImplementedError()
 
     def call(self, message: "Message") -> "Result":
@@ -110,11 +111,11 @@ cdef evmc_bytes32 evmc_get_code_hash_proxy(evmc_host_context* context,
                                            const evmc_address* address) with gil:
     return bytes_to_evmc_bytes32((<object>context).get_code_hash(evmc_address_to_bytes(address)))
 
-cdef void evmc_selfdestruct_proxy(evmc_host_context* context,
+cdef bool evmc_selfdestruct_proxy(evmc_host_context* context,
                                   const evmc_address* address,
                                   const evmc_address* beneficiary) with gil:
-    (<object>context).selfdestruct(evmc_address_to_bytes(address),
-                                   evmc_address_to_bytes(beneficiary))
+    return (<object>context).selfdestruct(evmc_address_to_bytes(address),
+                                          evmc_address_to_bytes(beneficiary))
 
 cdef size_t evmc_copy_code_proxy(evmc_host_context* context,
                                  const evmc_address* address,
@@ -183,12 +184,6 @@ cdef class Result:
     cdef evmc_result to_result(self):
         return self.c_result
 
-    def __dealloc__(self):
-        # Result objects have a release method that must be called to
-        # release any resources associated with the result.
-        if self.c_result.release:
-            self.c_result.release(&self.c_result)
-
     @property
     def status_code(self) -> evmc_status_code:
         return self.c_result.status_code
@@ -217,8 +212,10 @@ cdef class TxContext:
         block_number: int,
         block_timestamp: int,
         block_gas_limit: int,
-        block_difficulty: bytes,
-        chain_id: bytes):
+        block_prev_randao: bytes,
+        chain_id: bytes,
+        block_base_fee: bytes):
+
 
         self.tx_gas_price = tx_gas_price
         self.tx_origin = tx_origin
@@ -226,8 +223,9 @@ cdef class TxContext:
         self.block_number = block_number
         self.block_timestamp = block_timestamp
         self.block_gas_limit = block_gas_limit
-        self.block_difficulty = block_difficulty
+        self.block_prev_randao = block_prev_randao
         self.chain_id = chain_id
+        self.block_base_fee = block_base_fee
 
     cdef evmc_tx_context to_context(self):
         return evmc_tx_context(
@@ -237,8 +235,9 @@ cdef class TxContext:
             self.block_number,
             self.block_timestamp,
             self.block_gas_limit,
-            bytes_to_evmc_uint256be(self.block_difficulty),
+            bytes_to_evmc_uint256be(self.block_prev_randao),
             bytes_to_evmc_uint256be(self.chain_id),
+            bytes_to_evmc_uint256be(self.block_base_fee),
         )
 
 
@@ -256,38 +255,53 @@ cdef class Message:
         message.owns_ptr = owns_ptr
         return message
 
+    @property
+    def code_address(self) -> bytes:
+        return evmc_address_to_bytes(&self.c_message.code_address)
+
+    @property
+    def recipient(self) -> bytes:
+        return evmc_address_to_bytes(&self.c_message.recipient)
+
+    @property
+    def sender(self) -> bytes:
+        return evmc_address_to_bytes(&self.c_message.sender)
+
     @staticmethod
     cdef Message _build(
         evmc_call_kind kind,
         uint32_t flags,
         int32_t depth,
         int64_t gas,
-        evmc_address destination,
+        evmc_address recipient,
         evmc_address sender,
         uint8_t* input_data,
         size_t input_size,
         evmc_uint256be value,
-        evmc_bytes32 create2_salt):
+        evmc_bytes32 create2_salt,
+        evmc_address code_address):
         cdef evmc_message* message = <evmc_message*>malloc(sizeof(evmc_message))
         message.kind = kind
         message.flags = flags
         message.depth = depth
         message.gas = gas
-        message.destination = destination
+        message.recipient = recipient
         message.sender = sender
         message.input_data = input_data
         message.input_size = input_size
         message.value = value
         message.create2_salt = create2_salt
+        message.code_address = code_address
         return Message.from_message(message, True)
 
     @staticmethod
     def build(kind: evmc_call_kind,
               depth: int,
               gas: int,
-              destination_address: bytes,
+              recipient_address: bytes,
               sender_address: bytes,
               value: bytes,
+              code_address: bytes,
               input_data: bytes = None,
               create2_salt: bytes = None,
               flags: int = 0) -> Message:
@@ -310,12 +324,13 @@ cdef class Message:
             flags,
             depth,
             gas,
-            bytes_to_evmc_address(destination_address),
+            bytes_to_evmc_address(recipient_address),
             bytes_to_evmc_address(sender_address),
             c_input_data,
             input_size,
             bytes_to_evmc_uint256be(value),
-            c_create2_salt)
+            c_create2_salt,
+            bytes_to_evmc_address(code_address))
 
     def __dealloc__(self):
         if self.c_message is not NULL and self.owns_ptr:

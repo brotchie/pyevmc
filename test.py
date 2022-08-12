@@ -34,7 +34,7 @@ def from_uint256(value: bytes) -> int:
 
 
 def build_simple_message(destination: bytes, sender: bytes):
-    return evmc.Message.build(evmc.EVMC_CREATE, 0, int(1e9), destination, sender, ZERO256)
+    return evmc.Message.build(evmc.EVMC_CREATE, 0, int(1e9), destination, sender, ZERO256, destination)
 
 
 class HostInterface(evmc.HostInterface):

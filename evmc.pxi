@@ -2,6 +2,7 @@
 
 cimport libcpp
 from libc.stdint cimport uint8_t, int32_t, uint32_t, int64_t
+from libcpp cimport bool
 
 cdef extern from "evmc/include/evmc/evmc.h":
     ctypedef struct evmc_bytes32:
@@ -27,12 +28,13 @@ cdef extern from "evmc/include/evmc/evmc.h":
         uint32_t flags
         int32_t depth
         int64_t gas
-        evmc_address destination
+        evmc_address recipient
         evmc_address sender
         uint8_t* input_data
         size_t input_size
         evmc_uint256be value
         evmc_bytes32 create2_salt
+        evmc_address code_address
 
     ctypedef struct evmc_tx_context:
         evmc_uint256be tx_gas_price
@@ -41,8 +43,9 @@ cdef extern from "evmc/include/evmc/evmc.h":
         int64_t block_number
         int64_t block_timestamp
         int64_t block_gas_limit
-        evmc_uint256be block_difficulty
+        evmc_uint256be block_prev_randao
         evmc_uint256be chain_id
+        evmc_uint256be block_base_fee
 
     ctypedef struct evmc_host_context:
         pass
@@ -91,11 +94,15 @@ cdef extern from "evmc/include/evmc/evmc.h":
                                             evmc_address* address,
                                             evmc_bytes32* key)
     cpdef enum evmc_storage_status:
-        EVMC_STORAGE_UNCHANGED
-        EVMC_STORAGE_MODIFIED
-        EVMC_STORAGE_MODIFIED_AGAIN
+        EVMC_STORAGE_ASSIGNED
         EVMC_STORAGE_ADDED
         EVMC_STORAGE_DELETED
+        EVMC_STORAGE_MODIFIED
+        EVMC_STORAGE_DELETED_ADDED
+        EVMC_STORAGE_MODIFIED_DELETED
+        EVMC_STORAGE_ADDED_DELETED
+        EVMC_STORAGE_MODIFIED_RESTORED
+
 
     ctypedef evmc_storage_status (*evmc_set_storage_fn)(evmc_host_context* context,
                                                        evmc_address* address,
@@ -117,7 +124,7 @@ cdef extern from "evmc/include/evmc/evmc.h":
                                          uint8_t* buffer_data,
                                          size_t buffer_size)
 
-    ctypedef void (*evmc_selfdestruct_fn)(evmc_host_context* context,
+    ctypedef bool (*evmc_selfdestruct_fn)(evmc_host_context* context,
                                           evmc_address* address,
                                           evmc_address* beneficiary)
 
